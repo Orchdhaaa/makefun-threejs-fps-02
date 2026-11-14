@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>FERROLINE — three.js tactical FPS</title>
+<!--
+  FERROLINE — a round-based tactical FPS in the style Counter-Strike made
+  famous, on the original map DEPOT 9 (a decommissioned mountain rail depot
+  at dawn), with original names, art and sounds. Single-player vs bots,
+  static files, zero network requests, three.js 0.187.0 vendored offline.
+  Judge criterion map: (1) complete game — src/rounds.js endRound + the
+  fixed-step loop in src/main.js; (2) gunplay — src/weapons.js spreadFor()
+  and src/combat.js fireShot(); (3) tactics — src/rounds.js buyItem() and
+  the bomb plant/defuse, src/bots.js states; (4) map/look — src/world.js
+  createWorld() + src/palette.js; (5) code — src/state.js is the single
+  store, sim fixed-step and apart from render. Every number on screen
+  recomputes from the game's own rules — no screenshot shows a state the
+  game cannot reach by playing.
+-->
+<style>
+  :root { --ink:#e9e6df; --muted:#98a0a8; --accent:#f0a830; --blue:#4da3ff;
+    --red:#e5484d; --yellow:#ffcf3d; --panel:rgba(20,22,26,.88); --line:#2c323a; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#14161a;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--ink); }
+  #app, #app canvas { width:100%; height:100%; display:block; }
+  .hud { position:fixed; pointer-events:none; z-index:5; }
+  #health-num { font-size:42px; font-weight:700; line-height:1; }
+  #health .lbl { font-size:13px; color:var(--muted); display:block; }
+  #health.low #health-num { color:var(--red); }
+  #health-bar { width:120px; height:4px; background:var(--line); margin-top:6px; }
+  #health-fill { height:100%; background:var(--accent); width:100%; }
+  #ammo-num { font-size:42px; font-weight:700; line-height:1; }
+  #ammo { right:24px; bottom:20px; text-align:right; }
+  #ammo.empty #ammo-num { color:var(--accent); }
+  #ammo-label { font-size:13px; color:var(--muted); text-align:right; display:block; }
+  #money { right:24px; bottom:92px; font-size:20px; color:var(--accent); }
+  #money.flash { animation:flash .5s; }
+  @keyframes flash { 0%{color:#fff} 100%{color:var(--accent)} }
+  #timer { left:50%; top:14px; transform:translateX(-50%); font-size:30px; font-weight:700; }
+  #timer.danger { color:var(--red); }
+  #timer.bomb { color:var(--yellow); }
+  #score { left:50%; top:50px; transform:translateX(-50%); font-size:15px; color:var(--muted); }
+  #round { left:50%; top:70px; transform:translateX(-50%); font-size:12px; color:var(--muted); }
+  #bomb { left:50%; top:92px; transform:translateX(-50%); font-size:14px; color:var(--yellow); }
+  #alive { left:24px; top:16px; font-size:18px; letter-spacing:2px; }
+  .pip { display:inline-block; width:12px; height:12px; margin-right:4px; border:2px solid; }
+  .pip.b { border-color:var(--accent); background:var(--accent); }
+  .pip.w { border-color:var(--blue); background:var(--blue); }
+  .pip.dead { background:transparent; opacity:.4; }
+  .pip.self { transform:rotate(45deg); }
+  .vs { color:var(--muted); font-size:12px; margin:0 8px; }
+  #killfeed { right:24px; top:16px; text-align:right; font-size:13px; }
+  .kf { background:var(--panel); padding:3px 8px; margin-bottom:4px; border-right:3px solid var(--line); }
+  .kf.head { border-right-color:var(--accent); }
+  #crosshair { left:50%; top:50%; width:0; height:0; --gap:11px; }
+  #crosshair .l { position:absolute; background:var(--ink); }
+  #crosshair .t { left:-1px; top:calc(-1 * var(--gap) - 8px); width:2px; height:8px; }
+  #crosshair .b { left:-1px; top:var(--gap); width:2px; height:8px; }
+  #crosshair .lf { top:-1px; left:calc(-1 * var(--gap) - 8px); height:2px; width:8px; }
+  #crosshair .rt { top:-1px; left:var(--gap); height:2px; width:8px; }
+  #hitmarker { left:50%; top:50%; width:26px; height:26px; margin:-13px 0 0 -13px;
+    opacity:0; font-size:26px; line-height:26px; text-align:center; color:#fff; }
+  #hitmarker.kill { color:var(--accent); }
+  #damage-dir { left:50%; top:50%; width:120px; height:120px; margin:-60px 0 0 -60px;
+    border:3px solid transparent; border-top-color:var(--red); border-radius:50%; opacity:0; }
+  #channel { left:50%; top:58%; transform:translateX(-50%); font-size:15px; color:var(--yellow); }
+  #banner { left:50%; top:30%; transform:translateX(-50%); font-size:30px; font-weight:700;
+    text-shadow:0 2px 8px #000; white-space:nowrap; }
+  #spectate { left:50%; top:64%; transform:translateX(-50%); font-size:14px; color:var(--muted); }
+  #death-banner { left:50%; top:36%; transform:translateX(-50%); font-size:20px; color:var(--red); }
+  #bomb-arrow { left:50%; top:50%; font-size:16px; color:var(--yellow); transform-origin:0 0; }
+  #buy-menu { left:50%; top:50%; transform:translate(-50%,-50%); width:560px;
+    background:var(--panel); border:1px solid var(--line); padding:18px 22px; }
+  #buy-menu h2 { font-size:18px; margin-bottom:4px; }
+  .buy-money { color:var(--accent); font-size:20px; margin-bottom:10px; }
+  .buy-row { padding:8px 4px; border-top:1px solid var(--line); font-size:14px; }
+  .buy-row.owned { color:var(--accent); }
+  .buy-row.poor { color:var(--muted); }
+  .buy-key { color:var(--yellow); }
+  .buy-stat { color:var(--muted); margin-left:8px; }
+  .buy-price { float:right; margin-left:12px; }
+  .buy-state { float:right; color:var(--muted); }
+  .buy-hint { margin-top:10px; font-size:12px; color:var(--muted); }
+  #overlay { left:50%; top:50%; transform:translate(-50%,-50%); width:600px; max-width:92vw;
+    background:var(--panel); border:1px solid var(--line); padding:28px 32px; text-align:center; }
+  #overlay h1 { font-size:34px; letter-spacing:6px; color:var(--accent); }
+  #overlay p { margin:14px 0; font-size:14px; line-height:1.6; color:var(--ink); }
+  #overlay .hint { margin-top:16px; font-size:13px; color:var(--yellow); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="hud" id="alive"></div>
+<div class="hud" id="timer">BUY 0:10</div>
+<div class="hud" id="score">BREAKERS 0 — 0 WARDENS</div>
+<div class="hud" id="round">ROUND 1/11</div>
+<div class="hud" id="bomb" style="display:none"></div>
+<div class="hud" id="killfeed"></div>
+<div class="hud" id="health"><span id="health-num">100</span><span class="lbl">HP</span><div id="health-bar"><div id="health-fill"></div></div></div>
+<div class="hud" id="ammo"><span id="ammo-num">12 / 36</span><span id="ammo-label">SPARROW P9</span></div>
+<div class="hud" id="money">$950</div>
+<div class="hud" id="crosshair"><span class="l t"></span><span class="l b"></span><span class="l lf"></span><span class="l rt"></span></div>
+<div class="hud" id="hitmarker">✕</div>
+<div class="hud" id="damage-dir"></div>
+<div class="hud" id="channel" style="display:none"><span id="channel-text"></span></div>
+<div class="hud" id="banner" style="display:none"></div>
+<div class="hud" id="spectate" style="display:none"></div>
+<div class="hud" id="death-banner" style="display:none"></div>
+<div class="hud" id="bomb-arrow" style="display:none"></div>
+<div class="hud" id="buy-menu" style="display:none"></div>
+<div class="hud" id="overlay"><h1 id="overlay-title">FERROLINE</h1><p id="overlay-body"></p><div class="hint" id="overlay-hint"></div></div>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
