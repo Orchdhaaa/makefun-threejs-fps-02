@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
 <title>FERROLINE — three.js tactical FPS</title>
+<script>
+/* FERROLINE boot watchdog — runs even if the whole module graph fails.
+   12 s from parse (payload ~1.07 MB downloads in ~11 s at 100 KB/s).
+   Flag-based: fires unless window.__ferrolineMenu is set AND the
+   operator column holds 4 cards. RETRY reloads; KEEP WAITING re-arms
+   12 s. A boot that lands late removes the banner itself (menu.js). */
+!function(){function c(){var o=!!window.__ferrolineMenu,h=document.getElementById('home-screen');if(h&&h.style.display==='none')return;var k=document.getElementById('home-operator-cards');if(k)o=o&&k.children.length>3;if(o)return;var b=document.createElement('div');b.id='fb';b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:10px;background:#14161a;border-bottom:3px solid #f0a830;color:#e9e6df;font:13px sans-serif;text-align:center';b.innerHTML="LOBBY DIDN'T FINISH LOADING — some parts may be missing. <button id='fr'>RETRY</button> <button id='fw'>KEEP WAITING</button>";(document.body||document.documentElement).appendChild(b);document.getElementById('fr').onclick=function(){location.reload()};document.getElementById('fw').onclick=function(){b.remove();setTimeout(c,12e3)}}setTimeout(c,12e3);window.__ferrolineWatchdog=c}();
+</script>
 <!--
   FERROLINE — a round-based tactical FPS in the style Counter-Strike made
   famous, on the original map DEPOT 9 (a decommissioned mountain rail depot
@@ -27,6 +35,7 @@
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--ink); }
   #app, #app canvas { width:100%; height:100%; display:block; }
   .hud { position:fixed; pointer-events:none; z-index:5; }
+  #health { left:24px; bottom:20px; }
   #health-num { font-size:42px; font-weight:700; line-height:1; }
   #health .lbl { font-size:13px; color:var(--muted); display:block; }
   #health.low #health-num { color:var(--red); }
@@ -45,6 +54,7 @@
   #score { left:50%; top:50px; transform:translateX(-50%); font-size:15px; color:var(--muted); }
   #round { left:50%; top:70px; transform:translateX(-50%); font-size:12px; color:var(--muted); }
   #bomb { left:50%; top:92px; transform:translateX(-50%); font-size:14px; color:var(--yellow); }
+  #mode-info { left:50%; top:112px; transform:translateX(-50%); font-size:12px; color:var(--accent); letter-spacing:1px; }
   #alive { left:24px; top:16px; font-size:18px; letter-spacing:2px; }
   .pip { display:inline-block; width:12px; height:12px; margin-right:4px; border:2px solid; }
   .pip.b { border-color:var(--accent); background:var(--accent); }
@@ -57,13 +67,47 @@
   .kf.head { border-right-color:var(--accent); }
   #crosshair { left:50%; top:50%; width:0; height:0; --gap:11px; }
   #crosshair .l { position:absolute; background:var(--ink); }
+  /* Holdover pip: one 3 px dot on the crosshair vertical line (and the
+     same dot inside the scope overlay). Positioned by hud.setHoldover
+     via translateY; hidden until then. */
+  #holdover-pip, #scope-pip { position:absolute; left:50%; top:50%; width:3px; height:3px;
+    background:rgba(233,230,223,0.7); border-radius:50%; display:none; }
   #crosshair .t { left:-1px; top:calc(-1 * var(--gap) - 8px); width:2px; height:8px; }
   #crosshair .b { left:-1px; top:var(--gap); width:2px; height:8px; }
   #crosshair .lf { top:-1px; left:calc(-1 * var(--gap) - 8px); height:2px; width:8px; }
   #crosshair .rt { top:-1px; left:var(--gap); height:2px; width:8px; }
-  #hitmarker { left:50%; top:50%; width:26px; height:26px; margin:-13px 0 0 -13px;
-    opacity:0; font-size:26px; line-height:26px; text-align:center; color:#fff; }
-  #hitmarker.kill { color:var(--accent); }
+  #hitmarker { left:50%; top:50%; width:52px; height:52px; margin:-26px 0 0 -26px;
+    opacity:0; font-size:44px; line-height:52px; text-align:center; color:#fff;
+    font-weight:900; text-shadow:0 0 6px #fff, 0 0 14px rgba(255,255,255,.8);
+    transition:opacity .12s; }
+  #hitmarker.kill { color:var(--accent); font-size:56px; line-height:52px;
+    text-shadow:0 0 8px var(--accent), 0 0 22px rgba(240,168,48,.9); }
+  /* Floating damage numbers (spawned by hud.showDamageNumber). */
+  #dmg-layer { left:0; top:0; width:100%; height:100%; overflow:hidden; }
+  .dmg-num { position:absolute; left:50%; top:50%; font-size:26px; font-weight:800;
+    color:#fff; text-shadow:0 0 6px rgba(0,0,0,.9), 0 2px 4px #000;
+    animation:dmg-rise .9s ease-out forwards; pointer-events:none; white-space:nowrap; }
+  .dmg-num.head { color:var(--yellow); font-size:30px; }
+  .dmg-num.kill { color:var(--accent); font-size:36px;
+    text-shadow:0 0 10px rgba(240,168,48,.9), 0 2px 4px #000; }
+  @keyframes dmg-rise {
+    0% { opacity:1; transform:translate(-50%,-50%) translateY(0) scale(1); }
+    20% { transform:translate(-50%,-50%) translateY(-14px) scale(1.15); }
+    100% { opacity:0; transform:translate(-50%,-50%) translateY(-72px) scale(1); } }
+  /* Persistent damage-dealt total, bottom-left above the health block. */
+  #dmg-total { left:24px; bottom:104px; font-size:15px; color:var(--muted); }
+  #dmg-total b { color:var(--yellow); font-size:22px; margin-left:6px; }
+  #dmg-total .lbl { font-size:12px; color:var(--muted); display:block; letter-spacing:2px; }
+  /* Sniper scope overlay: dark ring with a clear centre + crosshair.
+     Shown only while aiming down sights with the sniper. */
+  #scope { inset:0; display:none; z-index:6;
+    background:radial-gradient(circle at 50% 50%, transparent 0%, transparent 27%, rgba(0,0,0,0.92) 30%, rgba(0,0,0,0.98) 100%); }
+  #scope .sh { position:absolute; left:50%; top:50%; background:rgba(233,230,223,0.85); }
+  #scope .sh.h { width:34vw; height:2px; margin:-1px 0 0 -17vw; }
+  #scope .sh.v { width:2px; height:34vw; margin:-17vw 0 0 -1px; }
+  /* Weapon-switch popup: brief name flash centre-screen. */
+  #weapon-popup { left:50%; top:62%; transform:translateX(-50%); font-size:22px; font-weight:700;
+    color:var(--accent); opacity:0; transition:opacity 0.2s; letter-spacing:2px; }
   #damage-dir { left:50%; top:50%; width:120px; height:120px; margin:-60px 0 0 -60px;
     border:3px solid transparent; border-top-color:var(--red); border-radius:50%; opacity:0; }
   #channel { left:50%; top:58%; transform:translateX(-50%); font-size:15px; color:var(--yellow); }
@@ -89,20 +133,468 @@
   #overlay h1 { font-size:34px; letter-spacing:6px; color:var(--accent); }
   #overlay p { margin:14px 0; font-size:14px; line-height:1.6; color:var(--ink); }
   #overlay .hint { margin-top:16px; font-size:13px; color:var(--yellow); }
+  /* ---- Lobby (home screen) — v2 redesign -------------------------------
+     Fixed frame: topbar 56 + main grid (flex) + bottom bar 108 + footer
+     24 = 720px at the verification viewport. Chrome is solid opaque;
+     the ONLY transparent surface is the showcase stage, a window onto
+     the live depot scene behind the lobby. Type: sans for UI/display,
+     mono for data (prices, stats, keybinds, section numbers). Brand
+     amber #f0a830 is set once in :root and NEVER rewritten at runtime;
+     operator colour lives in --op-accent, set per card / on the lobby
+     root, and appears only in the four places the spec allows. */
+  :root { --panel:#191c20; --panel-solid:#14161a; --op-accent:#9b7bff;
+    --owned:#8a94a0; --topbar-h:56px; }
+  html,body { font-family:system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  /* HUD hidden while the lobby is open. Pure CSS, no JS dependency:
+     #home-screen carries an inline display:none exactly when the lobby
+     is closed (menu.hide()/play() and the direct ?mode= boot in
+     main.js) — so the HUD re-appears in-match and stays hidden with
+     JS dead, without a body-class swap that main.js never performs. */
+  body:has(#home-screen:not([style*="display: none"])) .hud { display:none !important; }
+  #home-screen { position:fixed; inset:0; z-index:20; display:flex;
+    flex-direction:column; height:100vh; height:100dvh; overflow:hidden;
+    background:transparent; color:var(--ink); }
+  #home-screen::before { content:""; position:absolute; left:0; right:0; top:0; height:3px; z-index:31;
+    background:linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent) 70%, transparent); }
+  /* --- Topbar (56px, single row) --- */
+  .lobby-topbar { flex:none; height:var(--topbar-h); min-height:56px; display:flex; align-items:center;
+    gap:16px; padding:0 20px; background:var(--panel-solid); border-bottom:1px solid var(--line); z-index:30; }
+  .lobby-logo { font-size:20px; font-weight:800; letter-spacing:5px; color:var(--ink); white-space:nowrap; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .lobby-logo span { color:var(--accent); }
+  .lobby-nav { display:flex; align-items:center; margin-left:8px; }
+  .lobby-nav-btn { font-family:inherit; font-size:11px; letter-spacing:2px; cursor:pointer;
+    color:var(--muted); background:transparent; border:0; border-left:1px solid var(--line); padding:8px 14px; white-space:nowrap; }
+  .lobby-nav-btn:first-child { border-left:0; }
+  .lobby-nav-btn:hover { color:var(--ink); }
+  .lobby-nav-btn.active { color:var(--accent); }
+  .lobby-nav-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .season-chip { margin-left:auto; font-size:10px; letter-spacing:2px; color:var(--accent);
+    border:1px solid var(--accent); padding:5px 10px; white-space:nowrap; }
+  .lobby-credits { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:13px; font-weight:700; letter-spacing:1px; color:var(--accent); white-space:nowrap;
+    border:1px solid var(--line); background:var(--panel); padding:7px 12px; flex-shrink:0; }
+  .lobby-credits.pulse { animation:creditPulse .5s ease-out; }
+  @keyframes creditPulse { 0% { box-shadow:0 0 0 2px var(--accent); } 100% { box-shadow:0 0 0 0 transparent; } }
+  .lobby-status { font-size:11px; letter-spacing:2px; color:var(--muted); white-space:nowrap; }
+  .lobby-status b { color:var(--accent); font-weight:700; }
+  /* --- Inline notice line (hydration / picker failure, §11.2) --- */
+  #home-notice { display:none; position:fixed; top:var(--topbar-h); left:0; right:0; z-index:36;
+    padding:7px 16px; background:#1d1f24; border-bottom:1px solid var(--accent);
+    color:var(--ink); font-size:12px; letter-spacing:.5px; text-align:center; }
+  #home-notice.show { display:block; }
+  /* --- Panels (shop / settings): fixed modal over a 35% scrim --- */
+  .lobby-panel { display:none; position:fixed; top:var(--topbar-h); left:0; right:0; bottom:0; z-index:35;
+    background:rgba(0,0,0,.35); overflow-y:auto; padding:16px; }
+  .lobby-panel.open { display:block; }
+  .panel-modal { max-width:1240px; margin:0 auto; background:var(--panel); border:1px solid var(--line); padding:16px 20px 20px; }
+  .panel-head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+  .panel-head h3 { font-size:12px; letter-spacing:4px; color:var(--accent); flex:1; }
+  .panel-head h3::after { content:""; display:block; height:1px; background:var(--line); margin-top:8px; }
+  .panel-close { font-family:inherit; font-size:14px; line-height:1; cursor:pointer; color:var(--ink);
+    background:var(--panel-solid); border:1px solid var(--line); width:32px; height:32px; flex:none; }
+  .panel-close:hover { border-color:var(--accent); color:var(--accent); }
+  /* --- Settings: 2x2 grid, groups hug their content --- */
+  .settings-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+  .settings-group { background:var(--panel-solid); border:1px solid var(--line); padding:14px 16px; }
+  .settings-group h3 { font-size:12px; letter-spacing:4px; color:var(--accent); margin-bottom:12px; }
+  .settings-group h3::after { content:""; display:block; height:1px; background:var(--line); margin-top:8px; }
+  .settings-subhead { font-size:10px; letter-spacing:2px; color:var(--muted); margin:8px 0 3px; }
+  .settings-subhead:first-of-type { margin-top:0; }
+  .quality-row { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+  .quality-btn { font-family:inherit; cursor:pointer; text-align:left; color:var(--ink);
+    background:var(--panel); border:1px solid var(--line); padding:10px 11px; min-height:118px; }
+  .quality-btn b { display:block; font-size:13px; font-weight:700; letter-spacing:2px; }
+  .quality-btn .q-spec { display:block; margin-top:6px; }
+  .quality-btn .q-spec span { display:block; font-size:10px; font-weight:400; letter-spacing:.5px;
+    line-height:1.5; color:var(--muted); white-space:nowrap; }
+  .quality-btn:hover { border-color:var(--accent); }
+  .quality-btn.selected { border-color:var(--accent); color:var(--accent);
+    box-shadow:0 0 0 1px var(--accent), 0 6px 22px rgba(240,168,48,.14);
+    background:linear-gradient(180deg, rgba(240,168,48,.14), var(--panel) 70%); }
+  .quality-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .sens-row { display:grid; grid-template-columns:150px 1fr 52px; align-items:center;
+    gap:10px; padding:3px 0; font-size:12px; letter-spacing:1px; }
+  .sens-row span { color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sens-row b { text-align:right; color:var(--accent); font-weight:700;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sens-row input[type=range], #home-volume { width:100%; accent-color:var(--accent); cursor:pointer; }
+  /* EFFECTIVE readouts sit side by side (3 columns) instead of 3
+     stacked rows — same values, ~40px shorter, which is what lets the
+     SENSITIVITY group balance against its row-mate. */
+  #home-sens-effective { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px 16px; }
+  .sens-effective-row { display:flex; justify-content:space-between; gap:8px; font-size:11px;
+    letter-spacing:1px; padding:6px 0 2px; border-top:1px solid var(--line); }
+  .sens-effective-row span { color:var(--muted); }
+  .sens-effective-row b { color:var(--accent); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .settings-note { font-size:11px; color:var(--muted); line-height:1.55; margin-top:10px; }
+  .settings-note b { color:var(--accent); font-weight:700; }
+  .settings-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  #home-sens-reset { margin-top:8px; }
+  .settings-btn { font-family:inherit; font-size:12px; letter-spacing:1px; cursor:pointer;
+    color:var(--ink); background:var(--panel); border:1px solid var(--line); padding:7px 12px; }
+  .settings-btn:hover { border-color:var(--accent); }
+  .settings-btn.preset-on { border-color:var(--accent); color:var(--accent); }
+  /* CONTROLS gets more air (taller rows, wider gaps) on purpose: it
+     is the short group in SENSITIVITY's row, and even spacing reads as
+     balance while a trailing void reads as a bug. */
+  .controls-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 20px; }
+  .ctl-row { display:flex; justify-content:space-between; gap:10px; font-size:11px;
+    padding:7px 0; border-bottom:1px solid #22262b; }
+  .ctl-key { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color:var(--accent); font-weight:700; white-space:nowrap; }
+  .ctl-act { color:var(--ink); text-align:right; }
+  /* --- Shop: preview stage left (sticky) + card grid right --- */
+  .shop-body { display:flex; gap:16px; align-items:flex-start; }
+  /* Shop preview stage: lightened backdrop (#43484f -> #26292f) so a
+     dark factory-finish viewmodel reads against it instead of
+     vanishing into near-black. The 3D lights were brightened to match
+     (menu.js initShopPreview). */
+  .shop-preview-stage { flex:none; width:300px; position:sticky; top:16px;
+    background:radial-gradient(120% 90% at 50% 40%, #4e545e, #2c3038); border:1px solid var(--line); }
+  .shop-preview-canvas-wrap { height:300px; position:relative; overflow:hidden; }
+  .shop-preview-canvas-wrap canvas { width:100%; height:100%; display:block; }
+  .shop-preview-fallback { position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:10px; color:var(--muted);
+    font-size:11px; letter-spacing:1px; text-align:center; padding:12px; }
+  .shop-preview-fallback[hidden] { display:none; }
+  .shop-preview-fallback svg { width:64px; height:64px; }
+  .shop-preview-head { padding:10px 12px 0; }
+  .shop-preview-name { font-size:14px; font-weight:700; letter-spacing:1px; }
+  .shop-preview-sub { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:11px; color:var(--muted); margin-top:3px; }
+  .shop-preview-text { padding:6px 12px 4px; font-size:11px; line-height:1.5; color:var(--muted); }
+  .shop-preview-chips { display:flex; gap:6px; padding:8px 12px 12px; align-items:center; }
+  .shop-preview-chips .chip { width:10px; height:10px; border:1px solid var(--line); }
+  .shop-preview-chips .chip-lbl { font-size:9px; letter-spacing:1px; color:var(--muted); margin-left:4px; }
+  .shop-grid-wrap { flex:1; min-width:0; }
+  .shop-tabs { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+  .shop-tab-btn { font-family:inherit; font-size:12px; letter-spacing:2px; cursor:pointer;
+    color:var(--muted); background:transparent; border:1px solid var(--line); padding:8px 16px; }
+  .shop-tab-btn:hover { color:var(--ink); border-color:var(--accent); }
+  .shop-tab-btn.selected { color:var(--accent); border-color:var(--accent);
+    box-shadow:0 0 0 1px var(--accent); background:rgba(240,168,48,.10); }
+  .shop-tab-btn:focus-visible, .shop-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .shop-note-line { font-size:12px; color:var(--ink); margin-bottom:2px; }
+  .shop-earn-line { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:11px; color:var(--muted); margin-bottom:10px; }
+  #home-shop-msg { font-size:12px; letter-spacing:.5px; color:var(--accent); min-height:16px; margin-bottom:10px; }
+  .shop-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:10px; }
+  .shop-group-head { grid-column:1 / -1; font-size:11px; letter-spacing:3px; color:var(--muted); margin-top:6px; }
+  .shop-group-head:first-child { margin-top:0; }
+  .shop-card { background:var(--panel-solid); border:1px solid var(--line); padding:12px;
+    display:flex; flex-direction:column; gap:6px; height:200px; }
+  .shop-card.outfit { height:248px; }
+  .shop-card.owned { border-color:var(--accent); }
+  .shop-card.equipped { box-shadow:0 0 0 1px var(--accent), 0 6px 22px rgba(240,168,48,.14); }
+  .shop-card.previewing { border-color:var(--accent); }
+  .shop-preview { height:56px; display:flex; align-items:center; justify-content:center; gap:10px;
+    background:var(--panel); border:1px solid var(--line); flex:none; }
+  .shop-preview.outfit { height:72px; }
+  .shop-glyph { width:28px; height:28px; color:var(--muted); flex:none; }
+  .shop-card.owned .shop-glyph, .shop-card.equipped .shop-glyph { color:var(--accent); }
+  .shop-chips { display:flex; gap:4px; }
+  .shop-swatch { width:48px; height:48px; border-radius:4px; flex:none; }
+  .shop-chips .chip { width:10px; height:10px; border:1px solid var(--line); }
+  .figure-stack { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; height:100%; }
+  .fig-helmet { width:26px; height:10px; border-radius:6px 6px 0 0; }
+  .fig-torso { width:40px; height:18px; }
+  .fig-vest { width:40px; height:6px; }
+  .fig-stripe { width:40px; height:3px; }
+  .fig-legs { width:34px; height:14px; }
+  .fig-boots { width:34px; height:5px; }
+  .shop-card-name { font-size:14px; font-weight:700; letter-spacing:1px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .shop-card-name > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .shop-rarity { font-size:9px; letter-spacing:2px; color:var(--muted); flex:none; }
+  .shop-for { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:10px; letter-spacing:1px; color:var(--muted);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .shop-pairs { font-size:10px; letter-spacing:1px; color:var(--muted); }
+  .shop-pairs b { color:var(--accent); font-weight:700; }
+  .shop-card-desc { font-size:11px; line-height:1.5; color:var(--muted);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .shop-card.outfit .shop-card-desc { -webkit-line-clamp:3; }
+  .shop-card-foot { display:flex; align-items:flex-end; justify-content:space-between; gap:8px;
+    margin-top:auto; min-height:30px; }
+  .shop-price-wrap { display:flex; flex-direction:column; gap:1px; min-width:0; }
+  .shop-price { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:13px; font-weight:700; color:var(--accent); letter-spacing:.5px; white-space:nowrap; }
+  .shop-per { font-size:9px; letter-spacing:1px; color:var(--muted); white-space:nowrap; }
+  .shop-pill { font-size:10px; font-weight:700; letter-spacing:1px; padding:4px 8px;
+    border:1px solid var(--owned); color:var(--owned); white-space:nowrap; }
+  .shop-pill.equipped { background:var(--accent); border-color:var(--accent); color:#14161a; }
+  .shop-btn { font-family:inherit; font-size:11px; font-weight:700; letter-spacing:2px; cursor:pointer;
+    color:#14161a; background:var(--accent); border:1px solid var(--accent); padding:8px 14px; white-space:nowrap; }
+  .shop-btn:hover:not(:disabled) { filter:brightness(1.12); }
+  .shop-btn:disabled { opacity:.45; cursor:not-allowed; }
+  .shop-btn.outline { background:transparent; color:var(--accent); }
+  .shop-btn.need { background:transparent; color:var(--muted); border-color:var(--line); }
+  .shop-btn.need:hover { border-color:var(--muted); }
+  .shop-unavailable { grid-column:1 / -1; padding:28px; text-align:center; font-size:12px;
+    letter-spacing:2px; color:var(--muted); border:1px solid var(--line); background:var(--panel-solid); }
+  .shop-unavailable .shop-btn { margin-top:14px; }
+  /* --- Main grid: 368 / 1fr / 312 — the left column is 368 so mode
+     names + descriptions fit without ellipsis (see menu-card rules). --- */
+  .lobby-main { flex:1; min-height:0; width:min(1240px, 96vw); margin:0 auto; padding:16px 8px;
+    display:grid; grid-template-columns:368px minmax(0, 1fr) 312px; gap:16px; }
+  .lobby-col { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .brand-strip { flex:none; height:40px; }
+  .home-eyebrow { font-size:12px; letter-spacing:5px; color:var(--muted); }
+  .home-eyebrow b { color:var(--accent); font-weight:700; }
+  .home-tagline { margin-top:4px; font-size:13px; color:var(--muted); letter-spacing:.5px; }
+  .home-tagline b { color:var(--ink); font-weight:700; }
+  .home-section { text-align:left; }
+  .home-section h2 { font-size:11px; font-weight:700; letter-spacing:4px; color:var(--muted);
+    display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .home-section h2::after { content:""; flex:1; height:1px; background:var(--line); }
+  .home-section h2 b { color:var(--accent); font-weight:700;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .home-section h2:focus { outline:none; }
+  .push-down { margin-top:auto; }
+  .menu-cards { display:grid; gap:8px; }
+  .menu-cards.modes { grid-template-columns:1fr 1fr; }
+  .menu-cards.maps { grid-template-columns:repeat(3, 1fr); }
+  /* Menu cards are 92px so a 3-line description fits under the name
+     (topline 16 + gap 4 + 3 x 16.5 desc lines + 20 padding = 89).
+     Descriptions are short display copy (menu.js SHORT_DESC) and must
+     never ellipsize at 1280px: mode cards get 3 lines, map cards too. */
+  .menu-card { display:block; width:100%; height:92px; text-align:left; cursor:pointer;
+    font-family:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line);
+    padding:10px 12px; position:relative; overflow:hidden;
+    transition:border-color .12s, transform .12s; }
+  .menu-card:hover { border-color:var(--accent); transform:translateY(-2px); }
+  .menu-card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .menu-card.selected { border:2px solid var(--accent); padding:9px 11px;
+    box-shadow:0 0 0 1px var(--accent), 0 6px 22px rgba(240,168,48,.14);
+    background:linear-gradient(180deg, rgba(240,168,48,.14), var(--panel) 70%); }
+  .menu-card-strip { position:absolute; left:0; right:0; top:0; height:4px; }
+  .menu-card-topline { display:block; font-size:11px; font-weight:700; letter-spacing:0;
+    line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .menu-card-index { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:10px; color:var(--muted); letter-spacing:1px; margin-right:3px; }
+  .menu-card-name { text-transform:uppercase; }
+  .menu-card-desc { display:block; font-size:11px; line-height:1.5; color:var(--muted); margin-top:4px;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .menu-card.selected .menu-card-desc { padding-right:66px; }
+  .menu-card.selected::after { content:"SELECTED"; position:absolute; right:10px; bottom:9px;
+    font-size:10px; font-weight:700; letter-spacing:1px; color:#14161a;
+    background:var(--accent); padding:3px 8px; }
+  /* Map cards carry NO SELECTED pill: their 4px colour strip + amber
+     border + glow already mark the pick, and a 66px pill on a ~117px
+     card leaves the description a ~27px text column (it wrapped to
+     10 lines and ellipsised). Selection stays unambiguous. */
+  .menu-cards.maps .menu-card.selected::after { content:none; }
+  .menu-cards.maps .menu-card.selected .menu-card-desc { padding-right:0; }
+  /* Selected-mode detail tile: the 6th cell of the mode grid. Solid
+     border + amber left bar + ABOUT header — an intentional info panel. */
+  .detail-tile { cursor:default; height:92px; border-left:3px solid var(--accent); }
+  .detail-tile:hover { transform:none; border-color:var(--line); border-left-color:var(--accent); }
+  .detail-head { display:block; font-size:10px; font-weight:700; letter-spacing:1px; color:var(--accent); }
+  .detail-desc { display:block; font-size:11px; line-height:1.4; color:var(--ink); margin-top:4px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .detail-meta { display:block; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:11px; color:var(--muted); margin-top:4px; }
+  /* --- Showcase column: transparent stage + overlay name plate --- */
+  .lobby-showcase-col { position:relative; min-width:0; }
+  #home-showcase { position:absolute; inset:0; overflow:hidden;
+    background:radial-gradient(45% 40% at 78% 26%, rgba(255,214,150,.55), rgba(255,180,90,.18) 45%, transparent 70%),
+      radial-gradient(60% 55% at 50% 62%, rgba(240,168,48,.12), transparent 70%),
+      linear-gradient(180deg, #232f4a 0%, #3d4f6e 45%, #8a6f52 72%, #c98a4b 88%, rgba(16,18,21,.55) 100%); }
+  #home-showcase canvas { width:100%; height:100%; display:block; }
+  #home-showcase-fallback { display:none; position:absolute; inset:0; flex-direction:column;
+    align-items:center; justify-content:center; gap:8px; text-align:center; }
+  #home-showcase.showcase-failed #home-showcase-fallback { display:flex; }
+  #home-showcase-fallback .fallback-initial { font-size:120px; font-weight:900; line-height:1;
+    color:var(--op-accent); }
+  #home-showcase-fallback .fallback-note { font-size:11px; letter-spacing:2px; color:var(--muted); }
+  .showcase-plate { position:absolute; left:0; right:0; bottom:0; z-index:2; text-align:center;
+    padding:8px 12px 10px;
+    background:linear-gradient(180deg, transparent, rgba(20,22,26,.88) 55%); }
+  #home-operator-name { font-size:34px; font-weight:900; letter-spacing:6px; line-height:1; color:var(--ink); }
+  .name-plate-rule { width:120px; height:3px; margin:7px auto 0; background:var(--op-accent); }
+  #home-operator-role { font-size:12px; letter-spacing:3px; color:var(--muted); margin-top:5px; }
+  #home-operator-line { font-size:13px; color:var(--ink); margin-top:4px; font-style:italic; }
+  #home-operator-skill { font-size:12px; letter-spacing:.5px; color:var(--accent); margin-top:4px; }
+  #home-operator-outfit { font-size:11px; letter-spacing:2px; color:var(--muted); margin-top:4px;
+    display:flex; align-items:center; justify-content:center; gap:6px; }
+  #home-operator-outfit .outfit-chip { width:10px; height:10px; flex:none; background:var(--accent); }
+  /* --- Operator cards (right column, 100px) --- */
+  .operator-cards { display:grid; gap:8px; }
+  .operator-card { display:flex; gap:12px; width:100%; height:100px; text-align:left; cursor:pointer;
+    font-family:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line);
+    padding:12px; position:relative; transition:border-color .12s, transform .12s; }
+  .operator-card:hover { border-color:var(--accent); transform:translateY(-2px); }
+  .operator-card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .operator-card.selected { border:2px solid var(--accent); padding:11px;
+    box-shadow:0 0 0 1px var(--accent), 0 6px 22px rgba(240,168,48,.14);
+    background:linear-gradient(180deg, rgba(240,168,48,.14), var(--panel) 70%); }
+  .operator-card.selected::after { content:"SELECTED"; position:absolute; top:9px; right:10px;
+    font-size:10px; font-weight:700; letter-spacing:1px; color:#14161a;
+    background:var(--accent); padding:3px 8px; }
+  /* Operator portrait tile: the bust SVG is top-anchored and short
+     enough (52px) that it never reaches the role label. The label gets
+     its own clear zone at the tile bottom (bottom:4px, line-height:1)
+     so the text never overlaps the silhouette or touches the edge —
+     before, the 60px SVG ran under the label and the same-colour torso
+     swallowed the lower half of the letters. */
+  .op-tile { flex:none; width:56px; height:76px; position:relative; display:flex;
+    align-items:flex-start; justify-content:center; border:1px solid var(--line); padding-top:5px; }
+  .op-tile svg { width:44px; height:52px; color:var(--op-accent); }
+  .op-tile-role { position:absolute; left:0; right:0; bottom:4px; text-align:center;
+    font-size:8px; line-height:1; letter-spacing:1px; color:var(--op-accent); white-space:nowrap; }
+  .op-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+  .op-top { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .operator-name { font-size:15px; font-weight:700; letter-spacing:2px; }
+  .operator-role { font-size:10px; letter-spacing:2px; color:var(--op-accent); text-align:right; flex:none; }
+  .operator-card.selected .operator-role { visibility:hidden; }
+  .operator-callsign { font-size:11px; letter-spacing:1px; color:var(--muted); }
+  .operator-skill { font-size:11px; line-height:1.4; color:var(--ink);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .operator-skill b { color:var(--accent); font-weight:700; }
+  /* --- Flash highlight for nav targets --- */
+  @keyframes flashPulse { 0% { box-shadow:0 0 0 2px var(--accent); } 100% { box-shadow:0 0 0 0 transparent; } }
+  .flash { animation:flashPulse .6s ease-out; }
+  /* --- Bottom bar (108px): loadout + PLAY --- */
+  #home-bottombar { flex:none; height:130px; width:min(1240px, 96vw); margin:0 auto;
+    padding:8px; background:var(--panel-solid); border-top:1px solid var(--line); }
+  .bb-row1 { display:flex; align-items:center; justify-content:space-between; height:20px; margin-bottom:6px; }
+  .bb-row1 h2 { font-size:11px; font-weight:700; letter-spacing:4px; color:var(--muted); }
+  .bb-row1 h2 b { color:var(--accent); font-weight:700;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #home-summary { font-size:12px; letter-spacing:2px; color:var(--muted); }
+  #home-summary::before { content:"▸ "; color:var(--accent); }
+  .bb-row2 { display:flex; gap:8px; align-items:center; height:88px; }
+  .loadout-strip { flex:1; display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; min-width:0; }
+  .loadout-slot { background:var(--panel); border:1px solid var(--line); padding:6px 8px; height:64px;
+    display:flex; align-items:center; gap:8px; min-width:0; position:relative; }
+  .loadout-slot.loading { opacity:.55; pointer-events:none; }
+  .loadout-slot.clickable { cursor:pointer; }
+  .loadout-slot.clickable:hover { border-color:var(--accent); }
+  .loadout-slot.clickable:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .loadout-slot.picked { border-left:3px solid var(--accent); }
+  .loadout-slot.picked .loadout-glyph { color:var(--accent); }
+  .loadout-slot.picked .loadout-slot-state { background:var(--accent); color:#14161a; border-color:var(--accent); }
+  .loadout-slot.not-picked .loadout-slot-state { border-style:dashed; }
+  .loadout-hint { grid-column:1 / -1; font-size:11px; letter-spacing:1px; color:var(--muted);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .loadout-glyph { width:28px; height:28px; flex:none; color:var(--muted); }
+  .loadout-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+  .loadout-top { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  .loadout-slot-key { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:10px; letter-spacing:2px; color:var(--muted); }
+  .loadout-slot-state { font-size:9px; font-weight:700; letter-spacing:1px; padding:2px 6px;
+    border:1px solid var(--accent); color:var(--accent); white-space:nowrap; }
+  .loadout-slot-name { font-size:12px; font-weight:700; letter-spacing:1px; line-height:1.25;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .loadout-slot-detail { font-size:11px; letter-spacing:1px; color:var(--muted);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .loadout-skinchip { position:absolute; right:6px; bottom:6px; width:4px; height:4px; border-radius:50%; }
+  #home-play { flex:none; width:220px; height:64px; font-family:inherit; font-size:18px; font-weight:900;
+    letter-spacing:4px; color:#14161a; background:var(--accent); border:1px solid var(--accent);
+    cursor:pointer; box-shadow:0 8px 28px rgba(240,168,48,.28); transition:filter .12s, transform .12s; }
+  #home-play:hover:not(:disabled) { filter:brightness(1.12); transform:translateY(-1px); }
+  #home-play:active:not(:disabled) { transform:translateY(1px); }
+  #home-play:disabled { opacity:.45; cursor:not-allowed; box-shadow:none; }
+  #home-nojs-note { display:none; font-size:11px; color:var(--muted); letter-spacing:.5px;
+    align-self:center; max-width:220px; }
+  #home-nojs-note.show { display:block; }
+  .bb-summary-mobile { display:none; }
+  /* --- Footer strip (24px, one line) --- */
+  .home-foot { flex:none; height:24px; width:min(1240px, 96vw); margin:0 auto; padding:0 8px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; line-height:1.45; color:var(--muted); letter-spacing:1px;
+    background:var(--panel-solid); border-top:1px solid var(--line); white-space:nowrap; overflow:hidden; }
+  .home-foot b { color:var(--ink); font-weight:700; }
+  /* --- Mobile switcher (≤1020px only) --- */
+  .m-switcher { display:none; }
+  #home-section-loadout { display:none; }
+  @media (max-width: 1279px) {
+    .lobby-main { grid-template-columns:320px minmax(0, 1fr) 264px; gap:12px; width:min(1120px, 96vw); }
+    #home-bottombar, .home-foot { width:min(1120px, 96vw); }
+    .season-chip { display:none; }
+    /* Mode cards are 156px here: the "01 · " index would push the
+       longest names ("TEAM DEATHMATCH") into ellipsis, so it hides
+       and the name alone fits. */
+    .menu-card-index { display:none; }
+  }
+  @media (max-width: 1020px) {
+    :root { --topbar-h:104px; }
+    .lobby-status { display:none; }
+    .lobby-topbar { flex-wrap:wrap; height:var(--topbar-h); padding:0 12px; gap:0 12px; align-content:center; }
+    .lobby-logo { flex:1; min-width:0; }
+    .lobby-nav { order:3; flex:1 0 100%; margin:6px -12px 0; padding:0 12px;
+      overflow-x:auto; scrollbar-width:none; scroll-snap-type:x mandatory;
+      -webkit-mask-image:linear-gradient(90deg, #000 88%, transparent 100%);
+      mask-image:linear-gradient(90deg, #000 88%, transparent 100%); }
+    .lobby-nav::-webkit-scrollbar { display:none; }
+    .lobby-nav-btn { scroll-snap-align:start; padding:8px 14px; min-height:44px; }
+    #home-screen { overflow-y:auto; }
+    .lobby-main { display:flex; flex-direction:column; flex:none; padding:12px 8px; gap:12px; width:100%; }
+    .lobby-col { display:contents; }
+    .brand-strip { order:-3; }
+    .lobby-showcase-col { order:-2; height:360px; flex:none; }
+    .m-switcher { order:-1; display:flex; gap:4px; flex:none; }
+    .m-switcher button { flex:1; font-family:inherit; font-size:11px; letter-spacing:2px; cursor:pointer;
+      color:var(--muted); background:var(--panel); border:1px solid var(--line); padding:12px 4px; min-height:44px; }
+    .m-switcher button.m-active { color:var(--accent); border-color:var(--accent); }
+    .home-section.m-section { display:none; }
+    .home-section.m-section.m-active { display:block; }
+    #home-section-loadout { display:none; }
+    #home-section-loadout.m-section.m-active { display:block; }
+    .menu-cards.modes { grid-template-columns:1fr 1fr; }
+    .menu-cards.maps { grid-template-columns:repeat(3, 1fr); }
+    #home-bottombar { position:fixed; left:0; right:0; bottom:0; width:auto; height:auto;
+      z-index:40; padding:6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); border-top:1px solid var(--line); }
+    .bb-row1 { display:none; }
+    .bb-row2 { height:56px; }
+    #home-bottombar .loadout-strip { display:none; }
+    #home-play { flex:1; width:auto; height:56px; }
+    #home-bottombar .bb-summary-mobile { display:block; font-size:11px; letter-spacing:1px;
+      color:var(--muted); text-align:center; margin-bottom:6px; }
+    #home-screen { padding-bottom:96px; }
+    .home-foot { height:auto; min-height:24px; white-space:normal; text-align:center; padding:6px 12px; }
+    .shop-body { flex-direction:column; }
+    .shop-preview-stage { width:100%; position:static; }
+    .shop-preview-canvas-wrap { height:220px; }
+    .settings-grid { grid-template-columns:1fr; }
+    .lobby-panel { padding:8px; }
+  }
+  @media (max-width: 640px) {
+    .lobby-logo { letter-spacing:4px; font-size:18px; }
+    .menu-cards.modes { grid-template-columns:1fr; }
+    .menu-cards.maps { grid-template-columns:1fr; }
+    .loadout-strip { display:flex; overflow-x:auto; scroll-snap-type:x mandatory; gap:8px; }
+    .loadout-slot { flex:0 0 120px; scroll-snap-align:start; }
+    .quality-row { grid-template-columns:1fr; }
+    .sens-row { grid-template-columns:110px 1fr 48px; }
+    .controls-grid { grid-template-columns:1fr; }
+  }
+  @media (max-height: 719px) {
+    #home-screen { overflow-y:auto; }
+    .lobby-main { flex:none; }
+    .lobby-showcase-col { min-height:420px; }
+  }
 </style>
 </head>
-<body>
+<body class="lobby">
 <div id="app"></div>
 <div class="hud" id="alive"></div>
 <div class="hud" id="timer">BUY 0:10</div>
 <div class="hud" id="score">BREAKERS 0 — 0 WARDENS</div>
 <div class="hud" id="round">ROUND 1/11</div>
 <div class="hud" id="bomb" style="display:none"></div>
+<div class="hud" id="mode-info" style="display:none"></div>
 <div class="hud" id="killfeed"></div>
 <div class="hud" id="health"><span id="health-num">100</span><span class="lbl">HP</span><div id="health-bar"><div id="health-fill"></div></div></div>
+<div class="hud" id="dmg-total"><span class="lbl">DAMAGE DEALT</span><b id="dmg-total-num">0</b></div>
+<div class="hud" id="dmg-layer"></div>
+<div class="hud" id="scope"><div class="sh h"></div><div class="sh v"></div><span id="scope-pip"></span></div>
+<div class="hud" id="weapon-popup"></div>
 <div class="hud" id="ammo"><span id="ammo-num">12 / 36</span><span id="ammo-label">SPARROW P9</span></div>
 <div class="hud" id="money">$950</div>
-<div class="hud" id="crosshair"><span class="l t"></span><span class="l b"></span><span class="l lf"></span><span class="l rt"></span></div>
+<div class="hud" id="crosshair"><span class="l t"></span><span class="l b"></span><span class="l lf"></span><span class="l rt"></span><span id="holdover-pip"></span></div>
 <div class="hud" id="hitmarker">✕</div>
 <div class="hud" id="damage-dir"></div>
 <div class="hud" id="channel" style="display:none"><span id="channel-text"></span></div>
@@ -112,9 +604,368 @@
 <div class="hud" id="bomb-arrow" style="display:none"></div>
 <div class="hud" id="buy-menu" style="display:none"></div>
 <div class="hud" id="overlay"><h1 id="overlay-title">FERROLINE</h1><p id="overlay-body"></p><div class="hint" id="overlay-hint"></div></div>
+<!-- Home screen (main menu). Pickers are STATIC HTML (progressive
+     enhancement): with no JavaScript at all the lobby still shows every
+     picker, complete and legible — menu.js hydrates these nodes instead
+     of rebuilding them. Copy is verbatim from rounds.js MODES and
+     world.js MAPS taglines (see the acceptance diff check). -->
+<div id="home-screen">
+  <header class="lobby-topbar">
+    <div class="lobby-logo">FERRO<span>LINE</span></div>
+    <nav class="lobby-nav" aria-label="Lobby sections">
+      <button type="button" class="lobby-nav-btn" data-nav="modes">MODES</button>
+      <button type="button" class="lobby-nav-btn" data-nav="operators">OPERATORS</button>
+      <button type="button" class="lobby-nav-btn" data-nav="loadout">LOADOUT</button>
+      <button type="button" class="lobby-nav-btn" data-nav="shop">SHOP</button>
+      <button type="button" class="lobby-nav-btn" data-nav="settings">SETTINGS</button>
+    </nav>
+    <div class="season-chip">SEASON 01 · DEPOT DAWN</div>
+    <div class="lobby-credits" id="home-credits" title="Starter grant 2,000,000 CR for new profiles; also earned by playing: kills, round wins, match wins">◆ — CR</div>
+    <div class="lobby-status">5 v 5 &nbsp;·&nbsp; <b>BREAKERS</b> vs WARDENS</div>
+  </header>
+  <div id="home-notice" role="status"></div>
+  <div id="home-settings-panel" class="lobby-panel" role="dialog" aria-label="Settings">
+    <div class="panel-modal">
+      <div class="panel-head"><h3>SETTINGS</h3><button type="button" class="panel-close" id="home-settings-close" aria-label="Close settings">✕</button></div>
+      <div class="settings-grid">
+        <section class="settings-group" aria-label="Graphics quality">
+          <h3>GRAPHICS</h3>
+          <div class="quality-row" role="group" aria-label="Graphics quality tier">
+            <button type="button" class="quality-btn" data-quality="low"><b>LOW</b><span class="q-spec"><span>Shadows off</span><span>1.0x resolution</span><span>Light particles</span><span>No atmosphere</span></span></button>
+            <button type="button" class="quality-btn" data-quality="medium"><b>MEDIUM</b><span class="q-spec"><span>Shadows 1024</span><span>Up to 1.5x</span><span>Standard particles</span><span>Atmosphere on</span></span></button>
+            <button type="button" class="quality-btn" data-quality="ultra"><b>ULTRA</b><span class="q-spec"><span>Shadows 2048</span><span>Up to 2.0x</span><span>Full particles</span><span>All atmosphere</span></span></button>
+          </div>
+          <p class="settings-note">Applies to the match on PLAY. Shadows, resolution, particles and atmosphere scale with the tier.</p>
+          <div class="settings-row">
+            <button type="button" class="settings-btn" id="home-motion-btn">IDLE MOTION: ON</button>
+          </div>
+          <p class="settings-note">Idle motion sways the showcase soldier on the home screen. Saved automatically.</p>
+        </section>
+        <section class="settings-group" aria-label="Sound">
+          <h3>SOUND</h3>
+          <label class="sens-row" for="home-volume"><span>MASTER VOLUME</span><input type="range" id="home-volume" min="0" max="100" step="1" value="100"><b id="home-volume-val">100%</b></label>
+          <div class="settings-row">
+            <button type="button" class="settings-btn" id="home-mute-btn">SOUND: ON</button>
+          </div>
+          <div class="settings-row" role="group" aria-label="Volume presets">
+            <button type="button" class="settings-btn" data-volume-preset="0.4">QUIET 40%</button>
+            <button type="button" class="settings-btn" data-volume-preset="0.75">BALANCED 75%</button>
+            <button type="button" class="settings-btn" data-volume-preset="1">LOUD 100%</button>
+          </div>
+          <p class="settings-note"><b>WHAT YOU'LL HEAR</b><br>Footsteps · gunfire · plant beeps · round horns — all scaled by Master Volume.</p>
+          <p class="settings-note">Volume scales every sound in the game. Mute silences all audio. Saved automatically.</p>
+        </section>
+        <section class="settings-group" aria-label="Sensitivity">
+          <h3>SENSITIVITY</h3>
+          <div class="settings-subhead">GENERAL</div>
+          <label class="sens-row"><span>HIPFIRE</span><input type="range" class="sens-slider" data-sens="hipfire" min="0.3" max="2.5" step="0.05" value="1"><b data-sens-val="hipfire">1.00x</b></label>
+          <div class="settings-subhead">WEAPONS</div>
+          <label class="sens-row"><span>PISTOL</span><input type="range" class="sens-slider" data-sens="pistol" min="0.3" max="2.5" step="0.05" value="1"><b data-sens-val="pistol">1.00x</b></label>
+          <label class="sens-row"><span>PRIMARY (RIFLE)</span><input type="range" class="sens-slider" data-sens="primary" min="0.3" max="2.5" step="0.05" value="1"><b data-sens-val="primary">1.00x</b></label>
+          <label class="sens-row"><span>SNIPER</span><input type="range" class="sens-slider" data-sens="sniper" min="0.3" max="2.5" step="0.05" value="1"><b data-sens-val="sniper">1.00x</b></label>
+          <label class="sens-row"><span>KNIFE</span><input type="range" class="sens-slider" data-sens="knife" min="0.3" max="2.5" step="0.05" value="1"><b data-sens-val="knife">1.00x</b></label>
+          <div class="settings-subhead">SCOPES</div>
+          <label class="sens-row"><span>SNIPER SCOPE</span><input type="range" class="sens-slider" data-sens="scopeSniper" min="0.3" max="2.5" step="0.05" value="0.6"><b data-sens-val="scopeSniper">0.60x</b></label>
+          <label class="sens-row"><span>IRON SIGHTS</span><input type="range" class="sens-slider" data-sens="scopeIron" min="0.3" max="2.5" step="0.05" value="0.8"><b data-sens-val="scopeIron">0.80x</b></label>
+          <div class="settings-subhead">EFFECTIVE</div>
+          <div id="home-sens-effective">
+            <div class="sens-effective-row"><span>RIFLE HIPFIRE</span><b data-eff="rifle-hip">1.00x</b></div>
+            <div class="sens-effective-row"><span>SNIPER SCOPED</span><b data-eff="sniper-scoped">0.60x</b></div>
+            <div class="sens-effective-row"><span>RIFLE IRON SIGHTS</span><b data-eff="rifle-iron">0.80x</b></div>
+          </div>
+          <button type="button" class="settings-btn" id="home-sens-reset">RESET SENSITIVITY</button>
+        </section>
+        <section class="settings-group" aria-label="Controls">
+          <h3>CONTROLS</h3>
+          <div class="controls-grid">
+            <div class="ctl-row"><span class="ctl-key">WASD</span><span class="ctl-act">move</span></div>
+            <div class="ctl-row"><span class="ctl-key">MOUSE</span><span class="ctl-act">aim</span></div>
+            <div class="ctl-row"><span class="ctl-key">CLICK</span><span class="ctl-act">fire</span></div>
+            <div class="ctl-row"><span class="ctl-key">RIGHT MOUSE</span><span class="ctl-act">scope</span></div>
+            <div class="ctl-row"><span class="ctl-key">LEFT SHIFT</span><span class="ctl-act">sprint</span></div>
+            <div class="ctl-row"><span class="ctl-key">Z</span><span class="ctl-act">crouch</span></div>
+            <div class="ctl-row"><span class="ctl-key">R</span><span class="ctl-act">reload</span></div>
+            <div class="ctl-row"><span class="ctl-key">E</span><span class="ctl-act">plant / defuse</span></div>
+            <div class="ctl-row"><span class="ctl-key">B</span><span class="ctl-act">buy</span></div>
+            <div class="ctl-row"><span class="ctl-key">1–5</span><span class="ctl-act">switch weapon / item</span></div>
+            <div class="ctl-row"><span class="ctl-key">M</span><span class="ctl-act">mute</span></div>
+            <div class="ctl-row"><span class="ctl-key">H</span><span class="ctl-act">home</span></div>
+            <div class="ctl-row"><span class="ctl-key">ESC</span><span class="ctl-act">pause</span></div>
+          </div>
+          <p class="settings-note">Full controls list — the same keys work in every match.</p>
+        </section>
+      </div>
+    </div>
+  </div>
+  <div id="home-shop-panel" class="lobby-panel" role="dialog" aria-label="Shop">
+    <div class="panel-modal">
+      <div class="panel-head"><h3>SHOP — CREDITS</h3><button type="button" class="panel-close" id="home-shop-close" aria-label="Close shop">✕</button></div>
+      <div class="shop-grant">Starter grant: 2,000,000 CR — try everything.</div>
+      <div class="shop-body">
+        <div class="shop-preview-stage" id="home-shop-preview">
+          <div class="shop-preview-canvas-wrap" id="home-shop-preview-wrap">
+            <div class="shop-preview-fallback" id="home-shop-preview-fallback" hidden>
+              <span id="home-shop-preview-fallback-glyph"></span>
+              <span id="home-shop-preview-fallback-text">PREVIEW UNAVAILABLE</span>
+              <span class="shop-chips" id="home-shop-preview-fallback-chips"></span>
+            </div>
+          </div>
+          <div class="shop-preview-head">
+            <div class="shop-preview-name" id="home-shop-preview-name">SPARROW P9</div>
+            <div class="shop-preview-sub" id="home-shop-preview-sub">SIDEARM · FACTORY FINISH</div>
+          </div>
+          <div class="shop-preview-text" id="home-shop-preview-text">Standard-issue sidearm. Free, always owned.</div>
+          <div class="shop-preview-chips" id="home-shop-preview-chips"></div>
+        </div>
+        <div class="shop-grid-wrap">
+          <div class="shop-tabs" role="group" aria-label="Shop tabs">
+            <button type="button" class="shop-tab-btn selected" data-shop-tab="weapons">WEAPONS</button>
+            <button type="button" class="shop-tab-btn" data-shop-tab="skins">SKINS</button>
+            <button type="button" class="shop-tab-btn" data-shop-tab="outfits">OUTFITS</button>
+          </div>
+          <p class="shop-note-line">Credits are earned by playing — no real money, ever.</p>
+          <p class="shop-earn-line">Kill +15 · Round win +50 · Match win +150 · Losing match ~100–150 CR</p>
+          <p class="shop-note-line" id="home-shop-skins-note" hidden>Each skin is priced per weapon — one family, one price, every weapon. Skins recolour your weapon — previewed here in the shop. In-match viewmodel framing is being raised in a follow-up.</p>
+          <div id="home-shop-msg" aria-live="polite"></div>
+          <div class="shop-grid" id="home-shop-grid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="lobby-main">
+    <div class="lobby-col">
+      <div class="brand-strip">
+        <div class="home-eyebrow">THREE.JS <b>//</b> TACTICAL FPS</div>
+        <p class="home-tagline">Plant the charge. Hold the depot. <b>Win the round.</b></p>
+      </div>
+      <div class="home-section m-section m-active" id="home-section-modes">
+        <h2 tabindex="-1"><b>01</b> SELECT MODE</h2>
+        <div class="menu-cards modes" id="home-mode-cards">
+          <button type="button" class="menu-card selected" data-id="bomb" data-kind="mode" aria-pressed="true">
+            <span class="menu-card-topline"><span class="menu-card-index">01 · </span><span class="menu-card-name">Bomb Mission</span></span>
+            <span class="menu-card-desc">Plant the charge, wipe the Wardens.</span>
+          </button>
+          <button type="button" class="menu-card" data-id="tdm" data-kind="mode" aria-pressed="false">
+            <span class="menu-card-topline"><span class="menu-card-index">02 · </span><span class="menu-card-name">Team Deathmatch</span></span>
+            <span class="menu-card-desc">First to 20 kills wins. Respawns.</span>
+          </button>
+          <button type="button" class="menu-card" data-id="attack" data-kind="mode" aria-pressed="false">
+            <span class="menu-card-topline"><span class="menu-card-index">03 · </span><span class="menu-card-name">Attack &amp; Defend</span></span>
+            <span class="menu-card-desc">Breakers storm the shed. Hold out.</span>
+          </button>
+          <button type="button" class="menu-card" data-id="domination" data-kind="mode" aria-pressed="false">
+            <span class="menu-card-topline"><span class="menu-card-index">04 · </span><span class="menu-card-name">Domination</span></span>
+            <span class="menu-card-desc">Hold A, B, C to score. First to 100.</span>
+          </button>
+          <button type="button" class="menu-card" data-id="frontline" data-kind="mode" aria-pressed="false">
+            <span class="menu-card-topline"><span class="menu-card-index">05 · </span><span class="menu-card-name">Frontline</span></span>
+            <span class="menu-card-desc">Push the front into the enemy base.</span>
+          </button>
+          <div class="menu-card detail-tile" id="home-mode-detail">
+            <span class="detail-head">ABOUT — BOMB MISSION</span>
+            <span class="detail-desc">Plant the charge, wipe the Wardens.</span>
+            <span class="detail-meta">5 v 5 · ROUND-BASED</span>
+          </div>
+        </div>
+      </div>
+      <div class="home-section m-section push-down" id="home-section-maps">
+        <h2 tabindex="-1"><b>02</b> SELECT MAP</h2>
+        <div class="menu-cards maps" id="home-map-cards">
+          <button type="button" class="menu-card selected" data-id="depot9" data-kind="map" aria-pressed="true">
+            <span class="menu-card-strip" style="background:#f0a830"></span>
+            <span class="menu-card-topline"><span class="menu-card-name">DEPOT 9</span></span>
+            <span class="menu-card-desc">Rail depot at dawn. Open lanes, cover.</span>
+          </button>
+          <button type="button" class="menu-card" data-id="foundry" data-kind="map" aria-pressed="false">
+            <span class="menu-card-strip" style="background:#b4552d"></span>
+            <span class="menu-card-topline"><span class="menu-card-name">FOUNDRY-7</span></span>
+            <span class="menu-card-desc">Sodium-lit factory. Tight lanes.</span>
+          </button>
+          <button type="button" class="menu-card" data-id="dustline" data-kind="map" aria-pressed="false">
+            <span class="menu-card-strip" style="background:#c9a06a"></span>
+            <span class="menu-card-topline"><span class="menu-card-name">DUSTLINE</span></span>
+            <span class="menu-card-desc">Desert canyon. Long sightlines.</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="lobby-showcase-col">
+      <div id="home-showcase">
+        <div id="home-showcase-fallback"><span class="fallback-initial" id="home-showcase-fallback-initial">V</span><span class="fallback-note">SHOWCASE UNAVAILABLE — SELECTION STILL WORKS</span></div>
+      </div>
+      <div class="showcase-plate">
+        <div id="home-operator-name">VEX</div>
+        <div class="name-plate-rule" id="home-operator-rule"></div>
+        <div id="home-operator-role">MARA VOSS · ASSAULT</div>
+        <div id="home-operator-line">Breaches first. Holds the line.</div>
+        <div id="home-operator-skill">SKILL — RAPID HANDS: Reloads 20% faster.</div>
+        <div id="home-operator-outfit"><span class="outfit-chip" id="home-operator-outfit-chip"></span><span id="home-operator-outfit-text">OUTFIT — DEPOT STANDARD</span></div>
+      </div>
+    </div>
+    <div class="lobby-col">
+      <div class="home-section m-section" id="home-section-operators">
+        <h2 tabindex="-1"><b>03</b> OPERATOR</h2>
+        <div class="operator-cards" id="home-operator-cards">
+          <button type="button" class="operator-card selected" data-id="vex" aria-pressed="true" style="--op-accent:#9b7bff">
+            <span class="op-tile" style="background:rgba(155,123,255,0.25);border-color:rgba(155,123,255,0.4)">
+              <svg viewBox="0 0 56 76" aria-hidden="true"><path d="M14 38 A14 14 0 0 1 42 38 L42 40 L14 40 Z" fill="currentColor"/><rect x="10" y="38" width="36" height="4" fill="currentColor"/><path d="M8 76 L16 50 L40 50 L48 76 Z" fill="currentColor" opacity="0.85"/></svg>
+              <span class="op-tile-role">ASSAULT</span>
+            </span>
+            <span class="op-body">
+              <span class="op-top"><span class="operator-name">VEX</span><span class="operator-role">ASSAULT</span></span>
+              <span class="operator-callsign">MARA VOSS</span>
+              <span class="operator-skill"><b>SKILL — RAPID HANDS:</b> Reloads 20% faster.</span>
+            </span>
+          </button>
+          <button type="button" class="operator-card" data-id="sable" aria-pressed="false" style="--op-accent:#2f9e8f">
+            <span class="op-tile" style="background:rgba(47,158,143,0.12);border-color:rgba(47,158,143,0.4)">
+              <svg viewBox="0 0 56 76" aria-hidden="true"><path d="M14 38 A14 14 0 0 1 42 38 L42 40 L14 40 Z" fill="currentColor"/><rect x="10" y="38" width="36" height="4" fill="currentColor"/><path d="M8 76 L16 50 L40 50 L48 76 Z" fill="currentColor" opacity="0.85"/></svg>
+              <span class="op-tile-role">RECON</span>
+            </span>
+            <span class="op-body">
+              <span class="op-top"><span class="operator-name">SABLE</span><span class="operator-role">RECON</span></span>
+              <span class="operator-callsign">DARA KINT</span>
+              <span class="operator-skill"><b>SKILL — LIGHT FOOT:</b> Moves 10% faster.</span>
+            </span>
+          </button>
+          <button type="button" class="operator-card" data-id="anvil" aria-pressed="false" style="--op-accent:#b4552d">
+            <span class="op-tile" style="background:rgba(180,85,45,0.12);border-color:rgba(180,85,45,0.4)">
+              <svg viewBox="0 0 56 76" aria-hidden="true"><path d="M14 38 A14 14 0 0 1 42 38 L42 40 L14 40 Z" fill="currentColor"/><rect x="10" y="38" width="36" height="4" fill="currentColor"/><path d="M8 76 L16 50 L40 50 L48 76 Z" fill="currentColor" opacity="0.85"/></svg>
+              <span class="op-tile-role">SUPPORT</span>
+            </span>
+            <span class="op-body">
+              <span class="op-top"><span class="operator-name">ANVIL</span><span class="operator-role">SUPPORT</span></span>
+              <span class="operator-callsign">BRAM HOLT</span>
+              <span class="operator-skill"><b>SKILL — PLATED VEST:</b> Takes 15% less damage.</span>
+            </span>
+          </button>
+          <button type="button" class="operator-card" data-id="wraith" aria-pressed="false" style="--op-accent:#4da3ff">
+            <span class="op-tile" style="background:rgba(77,163,255,0.12);border-color:rgba(77,163,255,0.4)">
+              <svg viewBox="0 0 56 76" aria-hidden="true"><path d="M14 38 A14 14 0 0 1 42 38 L42 40 L14 40 Z" fill="currentColor"/><rect x="10" y="38" width="36" height="4" fill="currentColor"/><path d="M8 76 L16 50 L40 50 L48 76 Z" fill="currentColor" opacity="0.85"/></svg>
+              <span class="op-tile-role">BREACHER</span>
+            </span>
+            <span class="op-body">
+              <span class="op-top"><span class="operator-name">WRAITH</span><span class="operator-role">BREACHER</span></span>
+              <span class="operator-callsign">ILYA SORREN</span>
+              <span class="operator-skill"><b>SKILL — SAPPER:</b> Plants 20% faster.</span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="m-switcher" role="tablist" aria-label="Lobby sections">
+      <button type="button" data-mtab="modes" class="m-active" role="tab">MODES</button>
+      <button type="button" data-mtab="maps" role="tab">MAPS</button>
+      <button type="button" data-mtab="operators" role="tab">OPERATORS</button>
+      <button type="button" data-mtab="loadout" role="tab">LOADOUT</button>
+    </div>
+    <div class="home-section m-section" id="home-section-loadout">
+      <h2 tabindex="-1"><b>04</b> LOADOUT</h2>
+      <div id="home-loadout-mobile-host"></div>
+    </div>
+  </div>
+  <div id="home-bottombar">
+    <div class="bb-row1">
+      <h2 tabindex="-1"><b>04</b> LOADOUT</h2>
+      <span id="home-summary">BOMB MISSION · DEPOT 9</span>
+    </div>
+    <div class="bb-summary-mobile" id="home-summary-mobile">BOMB MISSION · DEPOT 9</div>
+    <div class="bb-row2">
+      <div class="loadout-strip" id="home-loadout">
+        <div class="loadout-slot fixed" data-slot="pistol">
+          <span class="loadout-glyph"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="3" y="8" width="19" height="6" fill="currentColor"/><rect x="15" y="14" width="5" height="10" fill="currentColor" transform="rotate(10 17 19)"/><rect x="3" y="8" width="3" height="2" fill="currentColor"/></svg></span>
+          <span class="loadout-text">
+            <span class="loadout-top"><span class="loadout-slot-key">PISTOL</span><span class="loadout-slot-state">ALWAYS CARRIED</span></span>
+            <span class="loadout-slot-name">SPARROW P9</span>
+            <span class="loadout-slot-detail">12/36</span>
+          </span>
+          <span class="loadout-skinchip" hidden></span>
+        </div>
+        <div class="loadout-slot not-owned clickable" data-slot="primary" role="button" tabindex="0">
+          <span class="loadout-glyph"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="2" y="11" width="24" height="4" fill="currentColor"/><rect x="10" y="15" width="4" height="6" fill="currentColor" transform="rotate(-12 12 18)"/><rect x="18" y="15" width="4" height="5" fill="currentColor" transform="rotate(12 20 17)"/><rect x="2" y="12" width="5" height="2" fill="currentColor"/></svg></span>
+          <span class="loadout-text">
+            <span class="loadout-top"><span class="loadout-slot-key">PRIMARY</span><span class="loadout-slot-state">NOT OWNED · 1,200 CR</span></span>
+            <span class="loadout-slot-name">NO PRIMARY</span>
+            <span class="loadout-slot-detail">Buy in the shop · from 1,200 CR</span>
+          </span>
+          <span class="loadout-skinchip" hidden></span>
+        </div>
+        <div class="loadout-slot fixed" data-slot="knife">
+          <span class="loadout-glyph"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M5 23 L21 5 L23 7 L9 24 Z" fill="currentColor"/><rect x="3" y="20" width="7" height="3" fill="currentColor" transform="rotate(-45 6 21)"/></svg></span>
+          <span class="loadout-text">
+            <span class="loadout-top"><span class="loadout-slot-key">KNIFE</span><span class="loadout-slot-state">ALWAYS CARRIED</span></span>
+            <span class="loadout-slot-name">TALON K-1</span>
+            <span class="loadout-slot-detail">MELEE</span>
+          </span>
+          <span class="loadout-skinchip" hidden></span>
+        </div>
+        <div class="loadout-slot off clickable" data-slot="frag" role="button" tabindex="0">
+          <span class="loadout-glyph"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="17" r="7" fill="currentColor"/><rect x="12" y="6" width="4" height="5" fill="currentColor"/><path d="M16 7 L22 4" stroke="currentColor" stroke-width="2"/></svg></span>
+          <span class="loadout-text">
+            <span class="loadout-top"><span class="loadout-slot-key">FRAG</span><span class="loadout-slot-state">NOT CARRIED — CLICK TO ADD · FREE</span></span>
+            <span class="loadout-slot-name">FRAG GRENADE</span>
+            <span class="loadout-slot-detail">Free — click to add · round-based modes only</span>
+          </span>
+          <span class="loadout-skinchip" hidden></span>
+        </div>
+        <div class="loadout-slot off clickable" data-slot="smoke" role="button" tabindex="0">
+          <span class="loadout-glyph"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="17" r="7" fill="currentColor"/><rect x="12" y="6" width="4" height="5" fill="currentColor"/><path d="M16 7 L22 4" stroke="currentColor" stroke-width="2"/></svg></span>
+          <span class="loadout-text">
+            <span class="loadout-top"><span class="loadout-slot-key">SMOKE</span><span class="loadout-slot-state">NOT CARRIED — CLICK TO ADD · FREE</span></span>
+            <span class="loadout-slot-name">SMOKE GRENADE</span>
+            <span class="loadout-slot-detail">Free — click to add · round-based modes only</span>
+          </span>
+          <span class="loadout-skinchip" hidden></span>
+        </div>
+        <div id="home-loadout-hint" class="loadout-hint">Click PRIMARY to cycle your owned guns · Click FRAG / SMOKE to add them free · Buy more guns in the SHOP.</div>
+      </div>
+      <button id="home-play" type="button" disabled>▶&nbsp;&nbsp;PLAY</button>
+      <p id="home-nojs-note" class="show">JavaScript is required to play — enable it and reload.</p>
+    </div>
+  </div>
+  <p class="home-foot">WASD move · MOUSE aim · CLICK fire · R reload · E plant · B buy · 1–5 switch · ESC pause — FULL CONTROLS IN SETTINGS</p>
+</div>
 <script type="importmap">
 { "imports": { "three": "./vendor/three/three.module.min.js" } }
 </script>
 <script type="module" src="./src/main.js"></script>
+<script type="module">
+  // Standalone home-screen bootstrap. The coordinator (main.js) is the
+  // real wiring: it calls createHomeScreen with the real mode/map lists
+  // and an onPlay that starts the match. This block only runs when main.js
+  // has NOT wired the menu yet, so the menu still works on a plain load —
+  // and it can never override the coordinator's wiring (it runs after
+  // main.js in document order and skips when window.__ferrolineMenu exists).
+  // A ?mode= / ?map= link or ?shot= staging boots straight into the game
+  // (main.js hides the shell there), so the bootstrap must NOT fire on
+  // those loads — otherwise it re-shows the menu over the running game.
+  // Fallback lists below are VERBATIM from rounds.js MODES and world.js
+  // MAPS taglines (including killTarget / scoreTarget, which the mode
+  // detail tile reads) — they are a checked mirror of the real lists,
+  // not a second source. The try/catch leaves window.__ferrolineMenu
+  // unset on failure so the boot watchdog fires instead of a silent
+  // empty lobby.
+  import { createHomeScreen } from './src/menu.js';
+  const _q = new URLSearchParams(location.search);
+  if (!window.__ferrolineMenu && !_q.has('mode') && !_q.has('map') && !_q.has('shot')) {
+    try {
+      createHomeScreen({
+        modes: [
+          { id: 'bomb', name: 'Bomb Mission', desc: 'Plant the charge or wipe the Wardens; defuse or hold to stop them.', roundBased: true },
+          { id: 'tdm', name: 'Team Deathmatch', desc: 'First crew to 20 kills wins — or most kills when the clock ends. Instant respawns.', roundBased: false, killTarget: 20 },
+          { id: 'attack', name: 'Attack & Defend', desc: 'Breakers storm a shed: capture it or wipe the Wardens. Wardens hold till the clock ends.', roundBased: true },
+          { id: 'domination', name: 'Domination', desc: 'Hold points A, B and C to score — first crew to 100 points wins.', roundBased: true, scoreTarget: 100 },
+          { id: 'frontline', name: 'Frontline', desc: 'Push the front through the middle zone into the enemy base.', roundBased: true },
+        ],
+        maps: [
+          { id: 'depot9', name: 'DEPOT 9', desc: 'Mountain rail depot at dawn — open lanes, freight cover.' },
+          { id: 'foundry', name: 'FOUNDRY-7', desc: 'Sodium-lit factory floor — tight lanes, furnace cover.' },
+          { id: 'dustline', name: 'DUSTLINE', desc: 'Desert canyon outpost — long sightlines, mesa cover.' },
+        ],
+        onPlay: (sel) => { window.__ferrolineLastPlay = sel; },
+      });
+    } catch (e) { console.error('FERROLINE bootstrap failed:', e); }
+  }
+</script>
 </body>
 </html>
