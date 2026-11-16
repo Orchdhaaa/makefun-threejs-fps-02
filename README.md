@@ -3,9 +3,9 @@
 A round-based tactical first-person shooter built with three.js: two teams,
 short rounds, bots, a buy economy, and bullet-drop ballistics.
 
-![threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)
-![rank](https://make.fun/badge/threejs-fps-02/Orchdhaaa/makefun-threejs-fps-02/rank.svg)
-![reward](https://make.fun/badge/threejs-fps-02/Orchdhaaa/makefun-threejs-fps-02/reward.svg)
+[![make.fun · threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![rank](https://make.fun/badge/threejs-fps-02/Orchdhaaa/makefun-threejs-fps-02/rank.svg)](https://make.fun/bounty/threejs-fps-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![reward](https://make.fun/badge/threejs-fps-02/Orchdhaaa/makefun-threejs-fps-02/reward.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
 Built for the make.fun bounty: https://make.fun/bounty/threejs-fps-02
 
 ## Modes
