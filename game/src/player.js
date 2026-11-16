@@ -1,22 +1,23 @@
 // player.js — player movement + collision. Axis-separated AABB against the
 // world colliders: move X, resolve, move Z, resolve, so the player slides
 // along walls instead of sticking. Same collision the bots use.
-// Speeds (DESIGN §5.2): walk 5.2, crouch 2.4, slow-walk 2.6, accel 42,
-// friction 9, gravity 20, jump 6.2. Eye 1.6 m standing, 1.02 m crouched.
+// Speeds (DESIGN §5.2): walk 5.2, sprint 7.6 (Left Shift), crouch 2.4,
+// accel 42, friction 9, gravity 20, jump 6.2. Eye 1.6 m standing, 1.02 m crouched.
 import * as THREE from 'three';
+import { MAP } from './world.js';
 
 export const EYE_STAND = 1.6;
 export const EYE_CROUCH = 1.02;
 export const HEIGHT_STAND = 1.72;
 export const HEIGHT_CROUCH = 1.12;
 const RADIUS = 0.34;
-const WALK = 5.2, CROUCH_SPEED = 2.4, SLOW = 2.6;
+const WALK = 5.2, SPRINT = 7.6, CROUCH_SPEED = 2.4;
 const ACCEL = 42, AIR_ACCEL = 9, FRICTION = 9, GRAVITY = 20, JUMP = 6.2;
 
 export function createPlayer(colliders) {
   const p = {
     x: 0, z: 19, y: 0, vx: 0, vz: 0, vy: 0,
-    yaw: 0, pitch: 0, crouched: false, onGround: true,
+    yaw: 0, pitch: 0, crouched: false, sprinting: false, onGround: true,
     colliders,
   };
   return p;
@@ -39,13 +40,16 @@ export function moveAxis(p, dx, dz) {
   if (!hitsCollider(p.colliders, nx, p.z, h)) p.x = nx;
   let nz = p.z + dz;
   if (!hitsCollider(p.colliders, p.x, nz, h)) p.z = nz;
-  // Clamp to the depot bounds (walls are colliders too, this is a belt).
-  p.x = Math.max(-31.6, Math.min(31.6, p.x));
-  p.z = Math.max(-21.6, Math.min(21.6, p.z));
+  // Clamp to the current map's bounds (walls are colliders too, this is
+  // a belt). Follows the live MAP binding, so it tracks whichever map
+  // createWorld built; on DEPOT 9 this is the old ±31.6 / ±21.6 exactly.
+  const b = MAP.bounds;
+  p.x = Math.max(b.minX + 0.4, Math.min(b.maxX - 0.4, p.x));
+  p.z = Math.max(b.minZ + 0.4, Math.min(b.maxZ - 0.4, p.z));
 }
 
 export function playerStep(p, keys, dt, speedMul) {
-  const wantCrouch = !!(keys.ControlLeft || keys.KeyC);
+  const wantCrouch = !!keys.KeyZ; // Z (hold) is the crouch key.
   if (wantCrouch !== p.crouched) {
     if (!wantCrouch) {
       // Stand-up check: no low cover overhead.
@@ -53,8 +57,10 @@ export function playerStep(p, keys, dt, speedMul) {
       else p.crouched = false;
     } else p.crouched = true;
   }
-  const slow = !!keys.ShiftLeft;
-  const base = p.crouched ? CROUCH_SPEED : slow ? SLOW : WALK;
+  // Left Shift sprints (noticeably faster); crouching overrides sprint.
+  const sprinting = !!(keys.ShiftLeft || keys.ShiftRight) && !p.crouched;
+  p.sprinting = sprinting;
+  const base = p.crouched ? CROUCH_SPEED : sprinting ? SPRINT : WALK;
   const speed = base * (speedMul || 1);
   const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw);
   let fx = 0, fz = 0;
