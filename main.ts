@@ -4,7 +4,7 @@
 // /output/dossier.json with buildDossier from vendor/makefun-threejs.ts.
 // Runs twice, writes the same bytes both times: deterministic copy order,
 // no timestamps in the output.
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-threejs.ts';
@@ -12,8 +12,17 @@ import { buildDossier } from './vendor/makefun-threejs.ts';
 const repoRoot = dirname(fileURLToPath(import.meta.url));
 const outDir = process.env.MAKEFUN_OUTPUT_DIR || '/output';
 
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
+// Wipe only the CONTENTS of the output directory, never the directory
+// itself: in the grader /output is a volume mount point and deleting it
+// fails with EBUSY ("Device or resource busy"). Create the directory only
+// when it does not already exist.
+if (!existsSync(outDir)) {
+  mkdirSync(outDir, { recursive: true });
+} else {
+  for (const entry of readdirSync(outDir)) {
+    rmSync(join(outDir, entry), { recursive: true, force: true });
+  }
+}
 for (const name of ['game', 'screenshots']) {
   const src = join(repoRoot, name);
   if (existsSync(src)) cpSync(src, join(outDir, name), { recursive: true });
